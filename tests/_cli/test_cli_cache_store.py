@@ -226,3 +226,27 @@ def test_clean_notebook_beside_a_store_the_default_method_distrusts(
     assert read_manifest(beside) == {}
     assert (store_dir / "train" / "ab12").exists()
     assert read_manifest(elsewhere) == {"3f9c": {"train": {"C_ab12"}}}
+
+
+def test_prune_acts_on_the_configured_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configured store does not sit beside the notebooks that write it,
+    so a prune there needs the same agreement as any displaced cache."""
+    from tests._cli.test_cli_cache import write_lazy_entry, write_manifest
+
+    notebook = tmp_path / "nb.py"
+    notebook.write_text(NOTEBOOK)
+    store_dir = tmp_path / "elsewhere"
+    write_lazy_entry(store_dir, "train", "ab12")
+    write_manifest(store_dir, notebook, {"dead": {"train": {"C_ab12"}}})
+    configure_store(monkeypatch, store_dir)
+
+    result = CliRunner().invoke(
+        main, ["cache", "prune", str(notebook), "--force"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "cannot be checked for a manifest" in result.output
+    assert "Deleted 1 entry, freeing 30 B." in result.output
+    assert list((store_dir / "train").iterdir()) == []
