@@ -44,11 +44,12 @@ import {
   type CellActionButtonProps,
   useCellActionButtons,
 } from "../actions/useCellActionButton";
-import { raf2 } from "../navigation/focus-utils";
+import { focusCell, raf2 } from "../navigation/focus-utils";
 
 interface Props extends CellActionButtonProps {
   children: React.ReactNode;
   showTooltip?: boolean;
+  focusCellOnHide?: boolean;
 }
 
 export interface CellActionsDropdownHandle {
@@ -56,13 +57,20 @@ export interface CellActionsDropdownHandle {
 }
 
 const CellActionsDropdownInternal = (
-  { children, showTooltip = true, ...props }: Props,
+  { children, showTooltip = true, focusCellOnHide = true, ...props }: Props,
   ref: React.Ref<CellActionsDropdownHandle>,
 ) => {
   const [open, setOpen] = useState(false);
   const closePopover = () => setOpen(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const actions = useCellActionButtons({ cell: props, closePopover });
+  const focusCellOnClose = useRef(false);
+  const actions = useCellActionButtons({
+    cell: props,
+    closePopover,
+    onHideCode: () => {
+      focusCellOnClose.current = focusCellOnHide;
+    },
+  });
 
   const visibleActions = actions
     .map((group) => group.filter((action) => !action.redundant))
@@ -107,6 +115,15 @@ const CellActionsDropdownInternal = (
       className="w-[300px] p-0 pt-1 overflow-auto"
       scrollable={true}
       {...restoreFocus}
+      onCloseAutoFocus={(evt) => {
+        if (focusCellOnClose.current) {
+          focusCellOnClose.current = false;
+          evt.preventDefault();
+          focusCell(props.cellId);
+        } else {
+          restoreFocus.onCloseAutoFocus(evt);
+        }
+      }}
     >
       <Command>
         <CommandInput
@@ -217,7 +234,11 @@ export const ConnectionCellActionsDropdown = React.memo(
     }
 
     return (
-      <CellActionsDropdown showTooltip={false} {...state}>
+      <CellActionsDropdown
+        showTooltip={false}
+        focusCellOnHide={false}
+        {...state}
+      >
         {children}
       </CellActionsDropdown>
     );

@@ -33,6 +33,7 @@ import {
   type CellActionButtonProps,
   useCellActionButtons,
 } from "../actions/useCellActionButton";
+import { focusCell } from "../navigation/focus-utils";
 
 interface Props extends Pick<
   CellActionButtonProps,
@@ -54,7 +55,11 @@ export const CellActionsContextMenu = ({
 }: Props) => {
   const cellData = useCellData(cellId);
   const cellRuntime = useCellRuntime(cellId);
+  const focusCellOnClose = React.useRef(false);
   const actions = useCellActionButtons({
+    onHideCode: () => {
+      focusCellOnClose.current = true;
+    },
     cell: {
       cellId: cellId,
       name: cellData.name,
@@ -209,7 +214,11 @@ export const CellActionsContextMenu = ({
         className="w-[300px]"
         scrollable={true}
         onCloseAutoFocus={(evt) => {
-          if (suppressCloseAutoFocus.current) {
+          if (focusCellOnClose.current) {
+            focusCellOnClose.current = false;
+            evt.preventDefault();
+            focusCell(cellId);
+          } else if (suppressCloseAutoFocus.current) {
             evt.preventDefault();
             suppressCloseAutoFocus.current = false;
           }

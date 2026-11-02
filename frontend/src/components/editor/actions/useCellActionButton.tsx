@@ -82,9 +82,14 @@ export interface CellActionButtonProps extends Pick<
 interface Props {
   cell: CellActionButtonProps | null;
   closePopover?: () => void;
+  onHideCode?: (cellId: CellId) => void;
 }
 
-export function useCellActionButtons({ cell, closePopover }: Props) {
+export function useCellActionButtons({
+  cell,
+  closePopover,
+  onHideCode = focusCell,
+}: Props) {
   const {
     moveCell,
     sendToTop,
@@ -130,16 +135,12 @@ export function useCellActionButtons({ cell, closePopover }: Props) {
   const toggleHideCode = () => {
     const newConfig: Partial<CellConfig> = { hide_code: !config.hide_code };
     edit((tx) => tx.updateConfig(cellId, newConfig));
-    const editorView = getEditorView();
-    // Focus the cell when hiding so closing the menu cannot refocus the editor.
-    if (editorView) {
-      if (newConfig.hide_code) {
-        temporarilyShownCodeActions.remove(cellId);
-        markTouched({ cellId });
-        focusCell(cellId);
-      } else {
-        editorView.focus();
-      }
+    if (newConfig.hide_code) {
+      temporarilyShownCodeActions.remove(cellId);
+      markTouched({ cellId });
+      onHideCode(cellId);
+    } else {
+      getEditorView()?.focus();
     }
   };
 
