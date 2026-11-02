@@ -256,11 +256,13 @@ Prune never deletes an entry recorded under code that still exists.
 Deleting too much costs a recomputation, never a wrong result.
 
 `--dry-run` reports the planned deletions and deletes nothing.
-Remove the flag to delete the entries. Add `--force` (or `-y`) to skip the
-confirmation prompt, for example in an automated script.
+Remove the flag to delete the entries. Prune asks for confirmation
+before deleting. Add `-y` (or `--yes`) to skip the prompt, for example
+in an automated script. Without a terminal to answer from, prune
+deletes nothing and says so.
 
 ```bash
-marimo cache prune my_notebook.py --force
+marimo cache prune my_notebook.py -y
 ```
 
 See [Managing the cache

@@ -724,7 +724,7 @@ async def test_prune_deletes_what_edited_code_cannot_produce_again(
     manifest = cache_dir / manifest_name(notebook)
 
     notebook.write_text(CACHING_NOTEBOOK.replace("epochs = 2", "epochs = 3"))
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert not entry.exists()
@@ -751,7 +751,7 @@ async def test_prune_keeps_an_entry_an_unrelated_edit_left_alone(
     notebook.write_text(
         CACHING_NOTEBOOK.replace('note = "old"', 'note = "new"')
     )
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "Nothing to delete." in result.output
@@ -768,12 +768,12 @@ def test_prune_takes_the_blobs_a_dead_entry_reads(tmp_path: Path) -> None:
         cache_dir, notebook, {"dead": {"train": {"C_ab12"}}}
     )
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         f"{cache_dir}\t30 B\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         "Deleted 1 entry, freeing 30 B.",
     ]
     assert list((cache_dir / "train").iterdir()) == []
@@ -795,7 +795,7 @@ def test_prune_keeps_an_entry_the_notebook_still_attests(
         {live: {"train": {"C_ab12"}}, "dead": {"train": {"C_77e0"}}},
     )
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "Deleted 1 entry, freeing 10 B." in result.output
@@ -840,7 +840,7 @@ def test_prune_dry_run_deletes_nothing(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         f"{cache_dir}\t10 B\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         "Deleted nothing (--dry-run).",
     ]
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
@@ -871,12 +871,12 @@ def test_prune_keeps_an_entry_no_manifest_tracks(tmp_path: Path) -> None:
     write_entry(cache_dir, "train", "C_77e0.pickle", 10)
     write_manifest(cache_dir, notebook, {"dead": {"train": {"C_ab12"}}})
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         f"{cache_dir}\t10 B\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         "  Kept 1 entry that no readable manifest tracks.",
         "Deleted 1 entry, freeing 10 B.",
     ]
@@ -892,7 +892,7 @@ def test_prune_deletes_the_entries_of_a_deleted_notebook(
         cache_dir, tmp_path / "gone.py", {"3f9c": {"train": {"C_ab12"}}}
     )
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(tmp_path)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(tmp_path), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "Deleted 1 entry, freeing 10 B." in result.output
@@ -913,7 +913,7 @@ def test_prune_deletes_the_entries_of_an_emptied_notebook(
         cache_dir, notebook, {"3f9c": {"train": {"C_ab12"}}}
     )
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(tmp_path)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(tmp_path), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "Deleted 1 entry, freeing 10 B." in result.output
@@ -921,7 +921,7 @@ def test_prune_deletes_the_entries_of_an_emptied_notebook(
     assert read_manifest(manifest) == {}
 
 
-def test_prune_keeps_the_entries_of_a_notebook_that_does_not_compile(
+def test_prune_keeps_the_entries_of_a_notebook_with_a_syntax_error(
     tmp_path: Path,
 ) -> None:
     notebook = tmp_path / "broken.py"
@@ -942,6 +942,36 @@ def test_prune_keeps_the_entries_of_a_notebook_that_does_not_compile(
         "  broken.py does not read as a whole notebook, so its entries are kept.",
         "Nothing to delete.",
     ]
+    assert (cache_dir / "train" / "C_ab12.pickle").exists()
+    assert read_manifest(manifest) == {"3f9c": {"train": {"C_ab12"}}}
+
+
+def test_prune_keeps_the_entries_of_a_notebook_whose_cell_does_not_compile(
+    tmp_path: Path,
+) -> None:
+    """A cell that parses but does not compile, such as one holding a bare
+    `break`, drops out of the compiled graph rather than raising. Its path
+    hash, and every path hash below it, would then read as dead code."""
+    notebook = tmp_path / "broken.py"
+    notebook.write_text(
+        "import marimo\n\napp = marimo.App()\n\n\n"
+        "@app.cell\ndef _():\n    x = 1\n    return (x,)\n\n\n"
+        "@app.cell\ndef _():\n    break\n    return\n"
+    )
+    cache_dir = make_cache_dir(tmp_path)
+    write_entry(cache_dir, "train", "C_ab12.pickle", 10)
+    manifest = write_manifest(
+        cache_dir, notebook, {"3f9c": {"train": {"C_ab12"}}}
+    )
+
+    result = CliRunner().invoke(main, ["cache", "prune", str(tmp_path), "-y"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "broken.py does not read as a whole notebook, so its entries are kept."
+        in result.output
+    )
+    assert "Deleted" not in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
     assert read_manifest(manifest) == {"3f9c": {"train": {"C_ab12"}}}
 
@@ -1032,12 +1062,12 @@ def test_prune_leaves_the_files_that_are_not_cache_manifests(
     export = cache_dir / ".nb-export.json"
     export.write_bytes(b"m" * 3)
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         f"{cache_dir}\t10 B\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         "Deleted 1 entry, freeing 10 B.",
     ]
     assert not (cache_dir / "train" / "C_ab12.pickle").exists()
@@ -1084,7 +1114,7 @@ def test_prune_skips_an_unreadable_manifest_with_no_one_to_ask(
 
     assert result.exit_code == 0, result.output
     assert "cannot be read" in result.output
-    assert f"Skipping {cache_dir}" in result.output
+    assert f"from {cache_dir}: rerun with -y to delete." in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
@@ -1158,7 +1188,7 @@ def test_prune_asks_before_deleting_beside_an_empty_manifest(
 
     assert result.exit_code == 0, result.output
     assert f"  {manifest_name(sibling)} holds no records." in result.output
-    assert f"Skipping {cache_dir}" in result.output
+    assert f"from {cache_dir}: rerun with -y to delete." in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
@@ -1181,9 +1211,7 @@ def test_prune_asks_before_deleting_beside_an_unattested_notebook(
     assert "  other.py shares this cache and has no manifest." in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
-    forced = CliRunner().invoke(
-        main, ["cache", "prune", str(notebook), "--force"]
-    )
+    forced = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert forced.exit_code == 0, forced.output
     assert "Deleted 1 entry, freeing 10 B." in forced.output
@@ -1201,11 +1229,41 @@ def test_prune_deletes_beside_a_file_that_is_not_a_notebook(
     write_entry(cache_dir, "train", "C_ab12.pickle", 10)
     write_manifest(cache_dir, notebook, {"dead": {"train": {"C_ab12"}}})
 
-    result = CliRunner().invoke(main, ["cache", "prune", str(notebook)])
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "utils.py" not in result.output
     assert "Deleted 1 entry, freeing 10 B." in result.output
+    assert not (cache_dir / "train" / "C_ab12.pickle").exists()
+
+
+def test_prune_asks_before_deleting_when_everything_checks_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan with nothing held up is still a deletion, and is agreed to
+    like any other."""
+    interactive(monkeypatch)
+    notebook = tmp_path / "nb.py"
+    notebook.write_text(NOTEBOOK)
+    cache_dir = make_cache_dir(tmp_path)
+    write_entry(cache_dir, "train", "C_ab12.pickle", 10)
+    write_manifest(cache_dir, notebook, {"dead": {"train": {"C_ab12"}}})
+
+    refused = CliRunner().invoke(
+        main, ["cache", "prune", str(notebook)], input="n\n"
+    )
+
+    assert refused.exit_code == 0, refused.output
+    assert f"Delete 1 entry (10 B) from {cache_dir}?" in refused.output
+    assert "Deleted" not in refused.output
+    assert (cache_dir / "train" / "C_ab12.pickle").exists()
+
+    accepted = CliRunner().invoke(
+        main, ["cache", "prune", str(notebook)], input="y\n"
+    )
+
+    assert accepted.exit_code == 0, accepted.output
+    assert "Deleted 1 entry, freeing 10 B." in accepted.output
     assert not (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
@@ -1225,7 +1283,7 @@ def test_prune_takes_the_answer_from_the_global_yes(
     assert not (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
-def test_prune_yes_answers_the_prompt_like_force(tmp_path: Path) -> None:
+def test_prune_yes_skips_the_prompt(tmp_path: Path) -> None:
     notebook, cache_dir = unreadable_cache(tmp_path)
 
     result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
@@ -1291,14 +1349,16 @@ def test_prune_recursive_reports_a_total(tmp_path: Path) -> None:
         write_manifest(cache_dir, notebook, {"dead": {"train": {key}}})
         dirs.append(cache_dir)
 
-    result = CliRunner().invoke(main, ["cache", "prune", "-r", str(tmp_path)])
+    result = CliRunner().invoke(
+        main, ["cache", "prune", "-r", str(tmp_path), "-y"]
+    )
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines() == [
         f"{dirs[0]}\t1.0 KB\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         f"{dirs[1]}\t1.0 KB\t1 entry",
-        "  1 record of code the notebook no longer has.",
+        "  1 path hash of code the notebook no longer has.",
         "Total\t2.0 KB\t2 entries",
         "Deleted 2 entries, freeing 2.0 KB.",
     ]
@@ -1467,7 +1527,7 @@ def test_prune_asks_before_deleting_beside_a_file_it_cannot_read(
 
     assert result.exit_code == 0, result.output
     assert "other.py shares this cache and cannot be read." in result.output
-    assert f"Skipping {cache_dir}" in result.output
+    assert f"from {cache_dir}: rerun with -y to delete." in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
@@ -1501,5 +1561,5 @@ def test_prune_asks_before_deleting_beside_a_manifest_it_cannot_read(
 
     assert result.exit_code == 0, result.output
     assert f"  {manifest_name(sibling)} cannot be read:" in result.output
-    assert f"Skipping {cache_dir}" in result.output
+    assert f"from {cache_dir}: rerun with -y to delete." in result.output
     assert (cache_dir / "train" / "C_ab12.pickle").exists()

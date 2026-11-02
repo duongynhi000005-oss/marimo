@@ -388,11 +388,11 @@ Example usage:
 
     marimo cache prune my_notebook.py --dry-run
 
-    marimo cache prune my_notebook.py --force
+    marimo cache prune my_notebook.py -y
 
 Use `--dry-run` to report the planned deletions and delete nothing.
-Use `--force` (or `-y`) to skip confirmation prompts, for
-example in an automated script.
+Prune asks before deleting; `-y`/`--yes` answers for you, for example
+in an automated script.
 """,
 )
 @path_argument
@@ -403,21 +403,11 @@ example in an automated script.
     default=False,
     help="Report the planned deletions and delete nothing.",
 )
-@click.option(
-    "--force",
-    "--yes",
-    "-y",
-    "force",
-    is_flag=True,
-    default=False,
-    help="Prune without asking for confirmation.",
-)
-def cache_prune(
-    path: Path, recursive: bool, dry_run: bool, force: bool
-) -> None:
+@yes_option
+def cache_prune(path: Path, recursive: bool, dry_run: bool, yes: bool) -> None:
     from marimo._save.prune import PrunePlan, apply_prune, plan_prune
 
-    cache_dirs = resolve_cache_dirs_or_error(path, recursive)
+    cache_dirs = resolve_cache_dirs_or_error(path, recursive, deleting=True)
     if not cache_dirs:
         click.echo("No cache directories found.")
         return
@@ -432,7 +422,7 @@ def cache_prune(
         tuple(
             directory
             for directory in plan.directories
-            if not directory.is_empty() and _approve(directory, force=force)
+            if not directory.is_empty() and _approve(directory, yes=yes)
         )
     )
     freed = apply_prune(approved)
@@ -455,9 +445,9 @@ def _report_plan(plan: PrunePlan) -> None:
 def _notes(directory: DirectoryPrunePlan) -> list[str]:
     notes = [*directory.skips, *directory.confirmations]
     if directory.dead_nodes:
-        records = "record" if directory.dead_nodes == 1 else "records"
+        hashes = "path hash" if directory.dead_nodes == 1 else "path hashes"
         notes.append(
-            f"{directory.dead_nodes} {records} of code the notebook no "
+            f"{directory.dead_nodes} {hashes} of code the notebook no "
             "longer has."
         )
     if directory.untracked:
@@ -468,26 +458,15 @@ def _notes(directory: DirectoryPrunePlan) -> list[str]:
     return notes
 
 
-def _approve(directory: DirectoryPrunePlan, *, force: bool) -> bool:
-    """Ask before pruning a directory whose entries are not all accounted for.
+def _approve(directory: DirectoryPrunePlan, *, yes: bool) -> bool:
+    """Ask before pruning a directory.
 
-    The reasons were printed with the plan. The prompt names the directory
-    they belong to.
+    The reasons anything was held up were printed with the plan. The prompt
+    names the directory they belong to.
     """
     if not directory.needs_approval():
         return True
-    if force or GLOBAL_SETTINGS.YES:
-        return True
-    if not _interactive():
-        click.echo(
-            f"Skipping {directory.cache_dir}: rerun with --force to prune it."
-        )
-        return False
-    return click.confirm(
-        f"Delete {format_entries(directory.freed.entries)} "
-        f"({format_bytes(directory.freed.total_bytes)}) "
-        f"from {directory.cache_dir}?"
-    )
+    return _confirm(directory.freed, yes=yes, cache_dir=directory.cache_dir)
 
 
 def _deletes_nothing(planned: CacheDirStats) -> bool:

@@ -228,11 +228,9 @@ def test_clean_notebook_beside_a_store_the_default_method_distrusts(
     assert read_manifest(elsewhere) == {"3f9c": {"train": {"C_ab12"}}}
 
 
-def test_prune_acts_on_the_configured_store(
+def test_prune_leaves_a_configured_store_that_path_did_not_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A configured store does not sit beside the notebooks that write it,
-    so a prune there needs the same agreement as any displaced cache."""
     from tests._cli.test_cli_cache import write_lazy_entry, write_manifest
 
     notebook = tmp_path / "nb.py"
@@ -242,9 +240,31 @@ def test_prune_acts_on_the_configured_store(
     write_manifest(store_dir, notebook, {"dead": {"train": {"C_ab12"}}})
     configure_store(monkeypatch, store_dir)
 
-    result = CliRunner().invoke(
-        main, ["cache", "prune", str(notebook), "--force"]
-    )
+    result = CliRunner().invoke(main, ["cache", "prune", str(notebook), "-y"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        f"Configured cache.store at {store_dir}; pass it as PATH to act on it.",
+        "No cache directories found.",
+    ]
+    assert (store_dir / "train" / "ab12").exists()
+
+
+def test_prune_acts_on_a_configured_store_given_as_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configured store does not sit beside the notebooks that write it,
+    so a prune there reports that a sibling cannot be checked."""
+    from tests._cli.test_cli_cache import write_lazy_entry, write_manifest
+
+    notebook = tmp_path / "nb.py"
+    notebook.write_text(NOTEBOOK)
+    store_dir = tmp_path / "elsewhere"
+    write_lazy_entry(store_dir, "train", "ab12")
+    write_manifest(store_dir, notebook, {"dead": {"train": {"C_ab12"}}})
+    configure_store(monkeypatch, store_dir)
+
+    result = CliRunner().invoke(main, ["cache", "prune", str(store_dir), "-y"])
 
     assert result.exit_code == 0, result.output
     assert "cannot be checked for a manifest" in result.output

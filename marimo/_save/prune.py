@@ -77,12 +77,12 @@ class DirectoryPrunePlan:
         return not self.entries and not self.rewrites
 
     def needs_approval(self) -> bool:
-        """Whether deleting from this directory has to be agreed to first.
+        """Whether applying this plan has to be agreed to first.
 
-        The reasons are reported whether or not they hold anything up. Only
-        a deletion is gated on them.
+        Every deletion is. The confirmations say what could not be checked,
+        and are reported whether or not anything is deleted.
         """
-        return bool(self.entries) and bool(self.confirmations)
+        return bool(self.entries)
 
 
 @dataclass(frozen=True)
@@ -279,15 +279,17 @@ def _live_nodes(notebook: Path) -> set[str] | None:
         return None
 
     try:
-        # A cell that does not compile raises here rather than dropping out
-        # of the graph, where its absence reads as code that is gone.
         graph = InternalApp(load_notebook_ir(status.notebook)).graph
-        return {
-            hash_cell_closure(cell_id, graph).hex() for cell_id in graph.cells
-        }
     except Exception:
         LOGGER.warning("Could not compile %s", notebook, exc_info=True)
         return None
+    if len(graph.cells) != len(status.notebook.cells):
+        # A cell that does not compile drops out of the graph rather than
+        # raising, and its absence would read as code that is gone. So
+        # would the path hash of every cell below it.
+        LOGGER.warning("Not every cell of %s compiles", notebook)
+        return None
+    return {hash_cell_closure(cell_id, graph).hex() for cell_id in graph.cells}
 
 
 def _unattested_siblings(cache_dir: Path, keys: Collection[str]) -> list[str]:

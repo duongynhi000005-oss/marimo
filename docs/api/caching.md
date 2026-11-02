@@ -557,18 +557,23 @@ Time-to-live (TTL) and size limits are out of scope for prune.
 
 ### Guards
 
+- Prune lists the planned deletions and asks for confirmation before
+  deleting anything. `-y` answers for you.
 - Prune never touches a directory that has no manifest. It reports the
   directory and moves on. A corrupt, newer-version, or empty manifest
-  makes prune report the reason. If a deletion is planned in the same
-  directory, prune asks for confirmation first.
+  makes prune report the reason beside the plan, so you can decline.
 - A notebook path prunes the shared cache directory beside that
-  notebook. Sibling notebooks can use it too. If a sibling
-  has no manifest, prune lists the planned deletions and asks for
-  confirmation. `--force` skips the prompt. It accepts that deletion
-  can remove entries a sibling notebook still reaches.
+  notebook. Sibling notebooks can use it too. If a sibling has no
+  manifest, prune reports it beside the plan. Confirming accepts that
+  deletion can remove entries a sibling notebook still reaches.
 - A manifest has dead nodes once its notebook no longer exists, and
-  prune deletes the entries under those nodes. Rename the notebook, run
-  it once under the new name, and its entries are protected again.
+  prune deletes the entries under those nodes. Rename the notebook and
+  run it once under the new name, and the entries that run reaches are
+  recorded under the new name and protected again; the rest are
+  recomputed on demand.
+- A notebook whose cells do not all compile, or a manifest whose
+  notebook reference no longer matches its own name (a moved tree),
+  keeps every entry it lists.
 - Prune never deletes a manifest. Concurrent kernels writing to the same
   manifest can drop each other's newest records. An entry whose newest
   record was dropped is either untracked, which prune never deletes, or
