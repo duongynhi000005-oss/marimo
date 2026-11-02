@@ -1,81 +1,76 @@
 /* Copyright 2026 Marimo. All rights reserved. */
+import { copyFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { getAppUrl, resetFile } from "../playwright.config";
-import {
-  maybeRestartKernel,
-  openCellActions,
-  openCommandPalette,
-} from "./helper";
+import { getAppUrl } from "../playwright.config";
+import { openCellActions, openCommandPalette } from "./helper";
 
-const appUrl = getAppUrl("title.py");
+test.beforeEach(async ({ page }, testInfo) => {
+  // A unique file also gives each test and retry its own kernel session.
+  const filename = testInfo.outputPath("notebook.py");
+  await copyFile("e2e-tests/py/title.py", filename);
+  const appUrl = new URL(getAppUrl("title.py"));
+  appUrl.searchParams.set("file", filename);
+  await page.goto(appUrl.toString());
 
-test.beforeEach(async ({ page }, info) => {
-  await page.goto(appUrl);
-  if (info.retry) {
-    await page.reload();
-  }
-  await maybeRestartKernel(page);
-});
-
-test.afterEach(async () => {
-  // Need to reset the file because this test modifies it
-  await resetFile("title.py");
-});
-
-test("change the cell to a markdown cell and toggle hide code", async ({
-  page,
-}) => {
-  const title = page.getByText("Hello Marimo!", { exact: true });
+  const title = page.getByRole("heading", { name: "Hello Marimo!", exact: true });
   await expect(title).toBeVisible();
-  const cellEditor = page.getByTestId("cell-editor");
-  const cell = page.locator(".marimo-cell").first();
-
-  // Convert to Markdown
   await openCellActions(page, title);
-  await page.getByText("Convert to Markdown").click();
+  await page.getByText("Convert to Markdown", { exact: true }).click();
   await expect(title).toBeVisible();
 
-  // Code stays visible while the cell is focused; blur it so the markdown
-  // initial hide-code takes effect before asserting.
+  // Converted Markdown stays visible until the cell loses focus.
   await page.keyboard.press("Escape");
   await page.locator("body").click({ position: { x: 4, y: 4 } });
+  await expect(page.getByTestId("cell-editor")).toBeHidden();
+});
 
-  // Expect cell editor to be invisible at first (markdown initial hide code is true)
-  await expect(cellEditor).toBeHidden();
-
-  // Unhide code
-  await openCellActions(page, title);
-  await page.getByText("Show code").click();
-  await expect(cellEditor).toBeVisible();
-
-  // Hide code
-  await openCellActions(page, title);
-  await page.getByText("Hide code").click();
-  await expect(cellEditor).toBeHidden();
-  await expect(cell).toBeFocused();
+test("dropdown toggles Markdown code and focuses the cell", async ({ page }) => {
+  const title = page.getByRole("heading", { name: "Hello Marimo!", exact: true });
+  const editor = page.getByTestId("cell-editor");
 
   await openCellActions(page, title);
   await page.getByText("Show code", { exact: true }).click();
-  const editorInput = cellEditor.locator(".cm-content");
+  await expect(editor).toBeVisible();
+
+  await openCellActions(page, title);
+  await page.getByText("Hide code", { exact: true }).click();
+  await expect(editor).toBeHidden();
+  await expect(page.locator(".marimo-cell")).toBeFocused();
+});
+
+test("right-click Hide code focuses the cell after closing", async ({ page }) => {
+  const title = page.getByRole("heading", { name: "Hello Marimo!", exact: true });
+  const editor = page.getByTestId("cell-editor");
+  await openCellActions(page, title);
+  await page.getByText("Show code", { exact: true }).click();
+  await expect(editor).toBeVisible();
+
+  const editorInput = editor.locator(".cm-content");
   await editorInput.click();
   await editorInput.click({ button: "right" });
   await page.getByRole("menuitem", { name: /^Hide code/ }).click();
-  await expect(cellEditor).toBeHidden();
-  await expect(cell).toBeFocused();
+  await expect(editor).toBeHidden();
+  await expect(page.locator(".marimo-cell")).toBeFocused();
+});
 
-  // Graph actions keep keyboard focus in the graph panel.
+test("dependency-graph Hide code keeps focus in the graph", async ({ page }) => {
   await openCommandPalette({ page, command: "Helper panel > Dependencies" });
   await page.getByRole("tab", { name: "Graph", exact: true }).click();
   await page.locator(".react-flow__panel .lucide-settings").click();
   await page.getByTestId("hide-pure-markdown-checkbox").uncheck();
   await page.keyboard.press("Escape");
   await page.locator(".react-flow__node").first().click();
-  const graphActions = page.getByRole("button", { name: "Cell actions", exact: true });
+
+  const graphActions = page.getByRole("button", {
+    name: "Cell actions",
+    exact: true,
+  });
   await graphActions.click();
   await page.getByText("Show code", { exact: true }).click();
-  await expect(cellEditor).toBeVisible();
+  await expect(page.getByTestId("cell-editor")).toBeVisible();
+
   await graphActions.click();
   await page.getByText("Hide code", { exact: true }).click();
-  await expect(cellEditor).toBeHidden();
+  await expect(page.getByTestId("cell-editor")).toBeHidden();
   await expect(graphActions).toBeFocused();
 });
