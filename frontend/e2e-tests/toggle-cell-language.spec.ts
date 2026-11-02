@@ -47,4 +47,5 @@ test("change the cell to a markdown cell and toggle hide code", async ({
   await openCellActions(page, title);
   await page.getByText("Hide code").click();
   await expect(cellEditor).toBeHidden();
+  await expect(page.locator(".marimo-cell").first()).toBeFocused();
 });

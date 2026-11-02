@@ -63,6 +63,8 @@ import { MarkdownIcon, PythonIcon } from "../cell/code/icons";
 import { useDeleteCellCallback } from "../cell/useDeleteCell";
 import { useRunCell } from "../cell/useRunCells";
 import { useSplitCellCallback } from "../cell/useSplitCell";
+import { focusCell } from "../navigation/focus-utils";
+import { useTemporarilyShownCodeActions } from "../navigation/state";
 import { NameCellInput } from "./name-cell-input";
 import type { ActionButton } from "./types";
 
@@ -90,9 +92,11 @@ export function useCellActionButtons({ cell, closePopover }: Props) {
     addColumnBreakpoint,
     clearCellOutput,
     markUntouched,
+    markTouched,
     createCell,
   } = useCellActions();
   const edit = useNotebookDocumentEdit();
+  const temporarilyShownCodeActions = useTemporarilyShownCodeActions();
   const splitCell = useSplitCellCallback();
   const runCell = useRunCell(cell?.cellId);
   const hasOnlyOneCell = useAtomValue(hasOnlyOneCellAtom);
@@ -127,11 +131,12 @@ export function useCellActionButtons({ cell, closePopover }: Props) {
     const newConfig: Partial<CellConfig> = { hide_code: !config.hide_code };
     edit((tx) => tx.updateConfig(cellId, newConfig));
     const editorView = getEditorView();
-    // If we're hiding the code, we should blur the editor
-    // otherwise, we should focus it
+    // Focus the cell when hiding so closing the menu cannot refocus the editor.
     if (editorView) {
       if (newConfig.hide_code) {
-        editorView.contentDOM.blur();
+        temporarilyShownCodeActions.remove(cellId);
+        markTouched({ cellId });
+        focusCell(cellId);
       } else {
         editorView.focus();
       }
