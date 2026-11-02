@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
+
 import marimo._save.stores.file as file_mod
 from marimo import _loggers
 from marimo._save.stores.file import FileStore
@@ -71,6 +73,24 @@ class TestFileStore:
 
         assert store.clear("../outside.bin") is False
         assert outside.exists()
+
+    @pytest.mark.parametrize(
+        "key",
+        ["", ".", "../test_store", "blk/..", "../outside", "blk/../../x"],
+    )
+    def test_clear_never_reaches_the_root_or_past_it(
+        self, tmp_path: Path, key: str
+    ) -> None:
+        """A key can come from a file on disk. Whatever it spells, `clear`
+        removes at most one entry below the store's root, never the root."""
+        store = FileStore(tmp_path / "test_store")
+        store.put("blk/key", b"x")
+        (tmp_path / "outside").write_bytes(b"o")
+
+        assert store.clear(key) is False
+        assert store.get("blk/key") == b"x"
+        assert (tmp_path / "outside").exists()
+        assert (tmp_path / "test_store").is_dir()
 
     def test_default_path_is_lazy(self) -> None:
         """Default save_path is not resolved at construction time."""

@@ -1,6 +1,7 @@
 # Copyright 2026 Marimo. All rights reserved.
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,14 @@ recursive_option = click.option(
         "Search a directory PATH recursively for cache directories, "
         "skipping dot-folders."
     ),
+)
+
+yes_option = click.option(
+    "-y",
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Delete without asking for confirmation.",
 )
 
 
@@ -83,10 +92,20 @@ def report(measured: list[tuple[Path, CacheDirStats]]) -> CacheDirStats:
     return total
 
 
-def resolve_cache_dirs_or_error(path: Path, recursive: bool) -> list[Path]:
-    """Resolve PATH, reporting a resolution failure as a CLI error."""
+def resolve_cache_dirs_or_error(
+    path: Path, recursive: bool, *, deleting: bool = False
+) -> list[Path]:
+    """Resolve PATH, reporting a resolution failure as a CLI error.
+
+    With `deleting`, a configured store is acted on only where PATH names
+    it. The rest of its directories are reported and left alone.
+    """
     from marimo._save.cache_dirs import CacheDirError, resolve_cache_dirs
 
+    if recursive and not path.is_dir():
+        raise click.UsageError(
+            f"-r/--recursive searches a directory, and {path} is a file."
+        )
     try:
         cache_dirs = resolve_cache_dirs(path, recursive=recursive)
     except CacheDirError as e:
@@ -94,7 +113,35 @@ def resolve_cache_dirs_or_error(path: Path, recursive: bool) -> list[Path]:
     configured = _configured_store_dirs(path, cache_dirs)
     if configured is None:
         return cache_dirs
-    return configured
+    if not deleting:
+        return configured
+    return _named_by_path(path, cache_dirs, configured)
+
+
+def _named_by_path(
+    path: Path, own: list[Path], configured: list[Path]
+) -> list[Path]:
+    """The configured directories PATH names.
+
+    A configured store can sit anywhere on disk. Deleting from it because
+    a PATH somewhere else was given would empty a cache the user did not
+    point at. It is acted on when PATH is that directory, or resolves to
+    it; the others are printed so the user can name one.
+    """
+    from marimo._utils.paths import normalize_path
+
+    named = {normalize_path(directory) for directory in own}
+    named.add(normalize_path(path))
+    kept: list[Path] = []
+    for directory in configured:
+        if normalize_path(directory) in named:
+            kept.append(directory)
+        else:
+            click.echo(
+                f"Configured cache.store at {directory}; pass it as PATH "
+                "to act on it."
+            )
+    return kept
 
 
 def _configured_store_dirs(
@@ -215,7 +262,7 @@ folders that hold each entry's stored value, or every block if you
 name none. Pass one or more NAME arguments to limit either mode to
 those blocks. Each NAME must match a name given to
 `mo.persistent_cache`. Accepts `-r`/`--recursive` to search PATH
-recursively.
+recursively. Asks before deleting; `-y`/`--yes` answers for you.
 
 Example usage:
 
@@ -229,18 +276,11 @@ Example usage:
 @path_argument
 @click.argument("names", nargs=-1, metavar="[NAME]...")
 @recursive_option
-@click.option(
-    "--yes",
-    "--force",
-    "-y",
-    is_flag=True,
-    default=False,
-    help="Delete without asking for confirmation.",
-)
+@yes_option
 def cache_clean(
     path: Path, names: tuple[str, ...], recursive: bool, yes: bool
 ) -> None:
-    cache_dirs = resolve_cache_dirs_or_error(path, recursive)
+    cache_dirs = resolve_cache_dirs_or_error(path, recursive, deleting=True)
     if not cache_dirs:
         click.echo("No cache directories found.")
         return
@@ -285,98 +325,73 @@ def _clean_tracked_entries(
     notebook: Path, cache_dir: Path, names: tuple[str, ...], *, yes: bool
 ) -> None:
     """Delete the entries `notebook`'s manifest lists, and forget them."""
-    from marimo._save.cache_dirs import (
-        CacheDirStats,
-        block_dir_name,
-        delete_cache_entries,
-    )
-    from marimo._save.manifest import (
-        ManifestError,
-        load_manifest,
-        manifest_name,
-    )
-    from marimo._save.stores.file import FileStore
+    from marimo._save.clean import apply_clean, plan_clean
+    from marimo._save.manifest import ManifestError
 
-    key = manifest_name(notebook)
-    store = FileStore(save_path=str(cache_dir))
-    manifest = None
-    if cache_dir.is_dir():
-        try:
-            manifest = load_manifest(store, key)
-        except (ManifestError, OSError) as e:
-            raise MarimoCLIError(str(e)) from e
-    if manifest is None:
+    try:
+        plan = plan_clean(cache_dir, notebook, names)
+    except (ManifestError, OSError) as e:
+        raise MarimoCLIError(str(e)) from e
+    if plan.manifest is None:
         click.echo(format_dir(cache_dir))
         click.echo(f"Nothing is tracked for {notebook}.")
         return
 
-    entries = manifest.entries()
-    if names:
-        wanted = {block_dir_name(name) for name in names}
-        entries = {entry for entry in entries if entry[0] in wanted}
-
-    planned = delete_cache_entries(cache_dir, entries, dry_run=True)
-    report([(cache_dir, planned)])
-    if not entries:
+    report([(cache_dir, plan.freed)])
+    if not plan.entries:
         click.echo("Nothing to delete.")
         return
 
     # A record whose entry no file answers to is dropped without asking.
     # Forgetting it takes nothing away from the cache.
-    deleting = not _deletes_nothing(planned)
-    if deleting and not _confirm(planned, yes=yes):
+    deleting = not plan.deletes_nothing()
+    if deleting and not _confirm(plan.freed, yes=yes):
         return
 
-    freed = (
-        delete_cache_entries(cache_dir, entries)
-        if deleting
-        else CacheDirStats()
-    )
-    # A record whose entry could not be removed is kept. The entry is still
-    # there to be read, and to be deleted another time.
-    manifest.discard(entries - _still_held(cache_dir, entries))
     try:
-        store.put(key, manifest.to_bytes())
+        freed = apply_clean(plan)
     except OSError as e:
-        raise MarimoCLIError(f"Could not rewrite {key}: {e}") from e
+        raise MarimoCLIError(f"Could not rewrite {plan.key}: {e}") from e
 
     if deleting:
         _report_deleted(freed)
         return
     click.echo("Nothing to delete.")
     click.echo(
-        f"Forgot {format_entries(len(entries))} the cache no longer holds."
+        f"Forgot {format_entries(len(plan.entries))} the cache no longer "
+        "holds."
     )
-
-
-def _still_held(
-    cache_dir: Path, entries: set[tuple[str, str]]
-) -> set[tuple[str, str]]:
-    """The entries a file on disk still answers to."""
-    return {
-        (block, key)
-        for block, key in entries
-        if (cache_dir / block / key).exists()
-        or any((cache_dir / block).glob(f"{key}.*"))
-    }
 
 
 def _deletes_nothing(planned: CacheDirStats) -> bool:
     return not planned.entries and not planned.total_bytes
 
 
-def _confirm(planned: CacheDirStats, *, yes: bool) -> bool:
+def _confirm(
+    planned: CacheDirStats, *, yes: bool, cache_dir: Path | None = None
+) -> bool:
     """Ask before deleting what `planned` measured.
 
     An answer already given, to this command or to `marimo` itself, stands in
-    for the prompt.
+    for the prompt. With no terminal to answer from, nothing is deleted and
+    the run says so, so a script that forgot `-y` loses nothing.
     """
     if yes or GLOBAL_SETTINGS.YES:
         return True
-    return click.confirm(
-        f"Delete {format_entries(planned.entries)} "
-        f"({format_bytes(planned.total_bytes)})?"
+    what = (
+        f"{format_entries(planned.entries)} "
+        f"({format_bytes(planned.total_bytes)})"
     )
+    where = f" from {cache_dir}" if cache_dir is not None else ""
+    if not _interactive():
+        click.echo(f"Skipping {what}{where}: rerun with -y to delete.")
+        return False
+    return click.confirm(f"Delete {what}{where}?")
+
+
+def _interactive() -> bool:
+    """Whether anyone is there to answer a prompt."""
+    return sys.stdin.isatty()
 
 
 def _report_deleted(freed: CacheDirStats) -> None:

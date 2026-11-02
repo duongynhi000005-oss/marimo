@@ -203,7 +203,10 @@ def clean_cache_dir(
         if wanted is not None and block.name not in wanted:
             continue
         if not _holds_entries(block):
-            LOGGER.warning("Skipping %s: it holds no cache entries.", block)
+            if _children(block):
+                LOGGER.warning(
+                    "Skipping %s: it holds no cache entries.", block
+                )
             continue
         held = _block_stats(block)
         if dry_run:
@@ -334,18 +337,26 @@ def _delete_block_entries(
     return freed
 
 
+def holds_entry(cache_dir: Path, block: str, key: str) -> bool:
+    """Whether a file on disk still answers to the entry `(block, key)`."""
+    block_dir = cache_dir / block
+    if not _is_directory(block_dir):
+        return False
+    return bool(_entry_files(_children(block_dir), key))
+
+
 def _holds_entries(block: Path) -> bool:
-    """Whether `block` holds a cache entry, or nothing at all.
+    """Whether `block` holds a cache entry.
 
     A `save_path` in the configuration can point the cache at a directory
     that is not one. Its subdirectories are then not blocks, and deleting
-    them would take a project with them.
+    them would take a project with them. An empty directory holds nothing
+    to free either way, so it is not one.
     """
-    children = _children(block)
-    return not children or any(
+    return any(
         not _is_directory(child)
         and _ENTRY_KEY.fullmatch(child.name.split(".", 1)[0]) is not None
-        for child in children
+        for child in _children(block)
     )
 
 

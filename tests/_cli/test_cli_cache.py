@@ -111,18 +111,17 @@ def test_dir_notebook_path(tmp_path: Path) -> None:
     assert result.output == f"{cache_dir}\n"
 
 
-def test_dir_recursive_notebook_path(tmp_path: Path) -> None:
-    # A notebook names one cache directory, so there is nothing to search and
-    # -r neither errors nor changes the answer.
+def test_recursive_needs_a_directory(tmp_path: Path) -> None:
+    # A notebook names one cache directory, so there is nothing to search.
+    # Accepting -r anyway would hide a PATH given by mistake.
     notebook = tmp_path / "nb.py"
     notebook.write_text(NOTEBOOK)
-    cache_dir = make_cache_dir(tmp_path)
-    make_cache_dir(tmp_path, "nested")
+    make_cache_dir(tmp_path)
 
     result = CliRunner().invoke(main, ["cache", "dir", "-r", str(notebook)])
 
-    assert result.exit_code == 0, result.output
-    assert result.output == f"{cache_dir}\n"
+    assert result.exit_code == 2, result.output
+    assert "-r/--recursive searches a directory" in result.output
 
 
 def test_dir_notebook_without_a_cache_directory(tmp_path: Path) -> None:
@@ -290,7 +289,17 @@ def test_clean_deletes_every_block(tmp_path: Path) -> None:
     assert [path.name for path in cache_dir.iterdir()] == [".nb-export.json"]
 
 
-def test_clean_asks_before_deleting(tmp_path: Path) -> None:
+def interactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend a terminal is attached, so a prompt is put rather than skipped."""
+    from marimo._cli.cache import commands
+
+    monkeypatch.setattr(commands, "_interactive", lambda: True)
+
+
+def test_clean_asks_before_deleting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    interactive(monkeypatch)
     cache_dir = make_cache_dir(tmp_path)
     write_entry(cache_dir, "train", "C_ab12.pickle", 10)
 
@@ -304,7 +313,10 @@ def test_clean_asks_before_deleting(tmp_path: Path) -> None:
     assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
-def test_clean_deletes_once_confirmed(tmp_path: Path) -> None:
+def test_clean_deletes_once_confirmed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    interactive(monkeypatch)
     cache_dir = make_cache_dir(tmp_path)
     write_entry(cache_dir, "train", "C_ab12.pickle", 10)
 
@@ -315,6 +327,22 @@ def test_clean_deletes_once_confirmed(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Deleted 1 entry, freeing 10 B." in result.output
     assert not (cache_dir / "train").exists()
+
+
+def test_clean_skips_the_prompt_with_no_one_to_answer(tmp_path: Path) -> None:
+    """A script that forgot `-y` loses nothing. A piped answer is not a
+    person, so it is not read either."""
+    cache_dir = make_cache_dir(tmp_path)
+    write_entry(cache_dir, "train", "C_ab12.pickle", 10)
+
+    result = CliRunner().invoke(
+        main, ["cache", "clean", str(tmp_path)], input="y\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Skipping 1 entry (10 B): rerun with -y to delete." in result.output
+    assert "Deleted" not in result.output
+    assert (cache_dir / "train" / "C_ab12.pickle").exists()
 
 
 def test_clean_keeps_the_blocks_it_was_not_named(tmp_path: Path) -> None:
@@ -389,6 +417,31 @@ def test_clean_notebook_deletes_only_what_the_manifest_lists(
     assert (cache_dir / "train" / "77e0" / "return.pickle").exists()
     assert not (cache_dir / "train" / "ab12").exists()
     assert read_manifest(manifest) == {}
+
+
+def test_clean_notebook_asks_before_deleting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Declining leaves the entry, and the record of it, exactly as found."""
+    interactive(monkeypatch)
+    notebook = tmp_path / "nb.py"
+    notebook.write_text(NOTEBOOK)
+    cache_dir = make_cache_dir(tmp_path)
+    write_entry(cache_dir, "train", "C_ab12.pickle", 10)
+    manifest = write_manifest(
+        cache_dir, notebook, {"3f9c": {"train": {"C_ab12"}}}
+    )
+    before = manifest.read_bytes()
+
+    result = CliRunner().invoke(
+        main, ["cache", "clean", str(notebook)], input="n\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Delete 1 entry (10 B)?" in result.output
+    assert "Deleted" not in result.output
+    assert (cache_dir / "train" / "C_ab12.pickle").exists()
+    assert manifest.read_bytes() == before
 
 
 def test_clean_notebook_keeps_the_blocks_it_was_not_named(

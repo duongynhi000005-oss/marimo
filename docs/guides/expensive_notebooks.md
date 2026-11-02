@@ -234,6 +234,12 @@ no blocks, it deletes every block. Pass one or more NAME arguments to
 limit either mode to those blocks. Each NAME must match a name you gave
 to `mo.persistent_cache`.
 
+Clean asks for confirmation before deleting. Add `-y` (or `--yes`) to
+skip the prompt, for example in an automated script. Without a terminal
+to answer from, clean deletes nothing and says so. With a `cache.store`
+configured, clean acts on that store only when PATH names its directory;
+otherwise it prints where the store is and leaves it alone.
+
 ## Lazy-load expensive UIs
 
 Lazily render UI elements that are expensive to compute using

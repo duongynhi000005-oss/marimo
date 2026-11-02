@@ -491,11 +491,19 @@ class LazyStore(Store):
     def clear(self, key: str) -> bool:
         # A key can name a directory of blobs, each tracked under its own
         # path. An export must not list what was just removed.
-        key = PurePath(key).as_posix()
-        prefix = f"{key}/"
+        # Keys are tracked as callers spell them, and Windows spells a path
+        # with backslashes. Compare in one spelling; clear under the
+        # caller's, which is the one the inner store knows.
+        posix = PurePath(key).as_posix()
+        prefix = f"{posix}/"
         for tracked in (self._written_keys, self._touched_keys):
             tracked.difference_update(
-                {k for k in tracked if k == key or k.startswith(prefix)}
+                {
+                    k
+                    for k in tracked
+                    if (p := PurePath(k).as_posix()) == posix
+                    or p.startswith(prefix)
+                }
             )
         return self._inner.clear(key)
 

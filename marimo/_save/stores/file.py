@@ -145,11 +145,11 @@ class FileStore(Store):
         return _valid_path(path)
 
     def clear(self, key: str) -> bool:
-        root = self.save_path
-        path = root / key
-        # Deletion never reaches past the store's own root, whatever a key
-        # taken from a file on disk spells.
-        if not normalize_path(path).is_relative_to(normalize_path(root)):
+        root = normalize_path(self.save_path)
+        path = normalize_path(self.save_path / key)
+        # A key taken from a file on disk can spell anything. Deletion never
+        # reaches past the store's own root, nor the root itself.
+        if path == root or not path.is_relative_to(root):
             return False
         path.parent.mkdir(parents=True, exist_ok=True)
         # A value stored in parts is a directory of them, which unlinking

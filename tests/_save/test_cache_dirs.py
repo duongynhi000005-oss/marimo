@@ -748,7 +748,8 @@ def test_clean_cache_dir_skips_a_directory_that_holds_no_entries(
     assert not block.exists()
     assert (project / ".git" / "HEAD").exists()
     assert (project / "src" / "app.py").exists()
-    assert not (project / "empty").exists()
+    # An empty directory holds nothing to free, and is not a block either.
+    assert (project / "empty").is_dir()
     assert "holds no cache entries" in caplog.text
 
 
