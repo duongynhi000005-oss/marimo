@@ -163,35 +163,40 @@ describe("notebookStateFromSession", () => {
       ]);
     });
 
-    it("handles error output in session cell", () => {
-      const errorOutput = {
-        type: "error" as const,
-        ename: "ValueError",
-        evalue: "Something went wrong",
-        traceback: ["Traceback line 1"],
-      };
-      const session = createSession([
-        createSessionCell("cell-1", [errorOutput]),
-      ]);
-      const result = notebookStateFromSession(session, null);
+    it.each([undefined, false, true])(
+      "restores error classification %s from the session",
+      (isInternal) => {
+        const errorOutput = {
+          type: "error" as const,
+          ename: "ValueError",
+          evalue: "Something went wrong",
+          traceback: ["Traceback line 1"],
+          ...(isInternal === undefined ? {} : { is_internal: isInternal }),
+        };
+        const session = createSession([
+          createSessionCell("cell-1", [errorOutput]),
+        ]);
+        const result = notebookStateFromSession(session, null);
 
-      expect(result).not.toBeNull();
-      invariant(result, "result is null");
-      expect(result.cellRuntime[CELL_1].output).toEqual({
-        channel: "marimo-error",
-        data: [
-          {
-            type: "exception",
-            exception_type: "ValueError",
-            msg: "Something went wrong",
-            raising_cell: null,
-            traceback: "Traceback line 1",
-          },
-        ],
-        mimetype: "application/vnd.marimo+error",
-        timestamp: 0,
-      });
-    });
+        expect(result).not.toBeNull();
+        invariant(result, "result is null");
+        expect(result.cellRuntime[CELL_1].output).toEqual({
+          channel: "marimo-error",
+          data: [
+            {
+              type: "exception",
+              exception_type: "ValueError",
+              msg: "Something went wrong",
+              raising_cell: null,
+              traceback: "Traceback line 1",
+              ...(isInternal ? { is_internal: true } : {}),
+            },
+          ],
+          mimetype: "application/vnd.marimo+error",
+          timestamp: 0,
+        });
+      },
+    );
 
     it("restores matching code from the session", () => {
       const code = "raise ValueError('cached failure')";

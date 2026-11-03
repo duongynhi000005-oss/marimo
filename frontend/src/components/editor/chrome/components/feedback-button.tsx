@@ -30,6 +30,7 @@ import {
   formatErrorsSection,
 } from "@/core/diagnostics/issue-details";
 import {
+  type CellErrorEntry,
   formatCellError,
   getCellErrorEntries,
 } from "@/core/errors/error-entries";
@@ -107,7 +108,8 @@ export const FeedbackButton: React.FC<PropsWithChildren> = ({ children }) => {
 
 export const FeedbackModal: React.FC<{
   onClose?: () => void;
-}> = () => {
+  initialErrors?: CellErrorEntry[];
+}> = ({ initialErrors }) => {
   const requestClient = useAtomValue(requestClientAtom);
   const environmentRequest = useAsyncData(async () => {
     if (requestClient == null) {
@@ -117,7 +119,7 @@ export const FeedbackModal: React.FC<{
   }, [requestClient]);
 
   const notebook = useAtomValue(notebookAtom);
-  const errors = getCellErrorEntries(store);
+  const errors = initialErrors ?? getCellErrorEntries(store);
 
   const cells = notebook.cellIds.inOrderIds.map(
     (cellId) => notebook.cellData[cellId],
@@ -133,10 +135,18 @@ export const FeedbackModal: React.FC<{
   });
   const notebookSourceAvailable = notebookSourceReason === undefined;
 
-  const [includeErrors, setIncludeErrors] = useLocalStorage(
+  const [savedIncludeErrors, setSavedIncludeErrors] = useLocalStorage(
     "marimo:issue-report:include-errors",
     false,
   );
+  const [selectedIncludeErrors, setSelectedIncludeErrors] = useState<
+    boolean | undefined
+  >(initialErrors === undefined ? undefined : true);
+  const includeErrors = selectedIncludeErrors ?? savedIncludeErrors;
+  const setIncludeErrors =
+    initialErrors === undefined
+      ? setSavedIncludeErrors
+      : setSelectedIncludeErrors;
   const [includeCode, setIncludeCode] = useLocalStorage(
     "marimo:issue-report:include-code",
     false,
