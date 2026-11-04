@@ -148,6 +148,8 @@ class PyodideSession:
         self._queue_manager = AsyncQueueManager()
         self.session_view = SessionView()
         self.instantiated = False
+        self.started = asyncio.Event()
+        """Set once the kernel task exists and takes commands."""
         self._initial_user_config = user_config
         self._enqueue_control_request = make_control_enqueuer(
             self._queue_manager.control_queue,
@@ -180,6 +182,7 @@ class PyodideSession:
             app_metadata=self.app_metadata,
             user_config=self._initial_user_config,
         )
+        self.started.set()
         await self.kernel_task.start()
 
     def put_control_request(self, request: commands.CommandMessage) -> None:
